@@ -11,7 +11,7 @@ interface CardItemProps {
 }
 
 export default function CardItem({ card, isDraggable = true }: CardItemProps) {
-  const { discardCard, myPlayerId, players, currentPlayerIndex, hasDrawn } = useGameStore();
+  const { discardCard, myPlayerId, players, currentPlayerIndex, hasDrawn, isBuilding } = useGameStore();
 
   const {
     attributes,
@@ -22,9 +22,20 @@ export default function CardItem({ card, isDraggable = true }: CardItemProps) {
     isDragging,
   } = useSortable({ id: card.id, disabled: !isDraggable });
 
-  const handleDoubleClick = () => {
+  const handleClick = () => {
     const isMyTurn = myPlayerId === players[currentPlayerIndex]?.playerId;
-    if (isMyTurn && hasDrawn && isDraggable) {
+    if (isMyTurn && hasDrawn && isDraggable && isBuilding) {
+      useGameStore.getState().toggleProposedMeld(card.id);
+    }
+  };
+
+  const handleDoubleClick = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    const isMyTurn = myPlayerId === players[currentPlayerIndex]?.playerId;
+    if (isMyTurn && hasDrawn && isDraggable && !isBuilding) {
+      if (card.isJoker) {
+        return;
+      }
       discardCard(card.id);
     }
   };
@@ -65,6 +76,7 @@ export default function CardItem({ card, isDraggable = true }: CardItemProps) {
       style={style}
       {...attributes}
       {...listeners}
+      onClick={handleClick}
       onDoubleClick={handleDoubleClick}
       layout
       whileHover={isDraggable ? { scale: 1.05, y: -10 } : undefined}

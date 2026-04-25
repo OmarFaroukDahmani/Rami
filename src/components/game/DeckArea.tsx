@@ -13,7 +13,7 @@ export default function DeckArea() {
   const topDiscard = discardPile[discardPile.length - 1];
 
   return (
-    <div className="flex gap-8 justify-center items-center p-6 bg-emerald-900/40 rounded-2xl border border-emerald-500/20 backdrop-blur-sm">
+    <div className="flex gap-12 justify-center items-center p-4">
       {/* Stock Pile */}
       <div 
         className="relative w-24 h-36 bg-gradient-to-br from-blue-800 to-indigo-900 rounded-xl shadow-2xl border-2 border-slate-300 flex items-center justify-center cursor-pointer hover:-translate-y-2 transition-transform"

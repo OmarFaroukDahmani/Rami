@@ -33,28 +33,31 @@ export function identifyMeldType(cards: Card[]): 'sequence' | 'set' | 'invalid' 
       if (card.suit !== suit) return false;
     }
 
+    const checkRanks = (rs: number[]) => {
+      let neededJokers = 0;
+      for (let i = 0; i < rs.length - 1; i++) {
+        const gap = rs[i + 1] - rs[i] - 1;
+        neededJokers += gap;
+      }
+      return neededJokers <= jokers.length;
+    };
+
     const ranks = nonJokers.map(c => c.rank).sort((a, b) => a - b);
     
     // Check for duplicate ranks in a sequence (invalid)
     const uniqueRanks = new Set(ranks);
     if (uniqueRanks.size !== ranks.length) return false;
 
-    // Calculate holes that need to be filled by jokers
-    let neededJokers = 0;
-    for (let i = 0; i < ranks.length - 1; i++) {
-      const gap = ranks[i + 1] - ranks[i] - 1;
-      neededJokers += gap;
+    // Normal check (Ace as low: 1)
+    if (checkRanks(ranks)) return true;
+
+    // Check with Ace as high (14)
+    if (ranks.includes(1)) {
+      const highRanks = ranks.map(r => r === 1 ? 14 : r).sort((a, b) => a - b);
+      if (checkRanks(highRanks)) return true;
     }
 
-    if (neededJokers > jokers.length) return false;
-
-    // Total sequence length cannot exceed 13 (A-K)
-    // Ranks span + extra jokers at the ends
-    const rankSpan = ranks[ranks.length - 1] - ranks[0] + 1;
-    const unusedJokers = jokers.length - neededJokers;
-    if (rankSpan + unusedJokers > 13) return false;
-
-    return true;
+    return false;
   };
 
   if (isSet()) return 'set';
@@ -72,16 +75,22 @@ export function calculateMeldPoints(cards: Card[]): number {
 
   if (type === 'set') {
     const rank = nonJokers[0].rank;
-    const value = rank === 1 ? 11 : (rank >= 10 ? 10 : rank);
+    const value = rank === 1 ? 10 : (rank >= 10 ? 10 : rank);
     return value * cards.length;
   }
 
   // Sequence
-  // Points: Ace is 11, JQK are 10, others face value
-  // This is a simplification for Joker points
+  // Points: Ace is 10 if high (Q-K-A), 1 if low (A-2-3). JQK are 10, others face value.
   let pts = 0;
+  const ranks = nonJokers.map(c => c.rank).sort((a, b) => a - b);
+  const isHighAce = ranks.includes(1) && ranks.some(r => r > 10);
+
   for(const c of nonJokers) {
-    pts += c.rank === 1 ? 11 : (c.rank >= 10 ? 10 : c.rank);
+    if (c.rank === 1) {
+        pts += isHighAce ? 10 : 1;
+    } else {
+        pts += c.rank >= 10 ? 10 : c.rank;
+    }
   }
   
   if (jokers.length > 0) {
@@ -94,4 +103,43 @@ export function calculateMeldPoints(cards: Card[]): number {
 
 export function isValidMeld(cards: Card[]): boolean {
   return identifyMeldType(cards) !== 'invalid';
+}
+
+export function canBuildMeld(hand: Card[], card: Card): boolean {
+  // Check if the card can form a valid 3-card meld with any 2 cards from the hand
+  for (let i = 0; i < hand.length; i++) {
+    for (let j = i + 1; j < hand.length; j++) {
+      if (isValidMeld([hand[i], hand[j], card])) return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Checks if a card "fits" into a prospective meld group (smart placement)
+ */
+export function fitsInMeld(meld: Card[], card: Card): boolean {
+  if (meld.length === 0) return false;
+  if (card.isJoker) return true; // Joker fits anywhere
+
+  const nonJokers = meld.filter(c => !c.isJoker);
+  if (nonJokers.length === 0) return true; // Group is only Jokers
+
+  const type = identifyMeldType(meld);
+  
+  if (type === 'set' || (meld.length < 3 && nonJokers.every(c => c.rank === nonJokers[0].rank))) {
+    return card.rank === nonJokers[0].rank;
+  }
+
+  if (type === 'sequence' || (meld.length < 3 && nonJokers.every(c => c.suit === nonJokers[0].suit))) {
+    if (card.suit !== nonJokers[0].suit) return false;
+    
+    // Sequence fits if rank is adjacent to any rank in the meld
+    const ranks = nonJokers.map(c => [c.rank, c.rank === 1 ? 14 : c.rank]).flat();
+    const cardRanks = [card.rank, card.rank === 1 ? 14 : card.rank];
+    
+    return cardRanks.some(cr => ranks.some(r => Math.abs(r - cr) === 1));
+  }
+
+  return false;
 }

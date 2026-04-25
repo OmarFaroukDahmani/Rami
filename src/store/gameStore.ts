@@ -3,7 +3,7 @@ import { arrayMove } from '@dnd-kit/sortable';
 import { Card, Meld, PlayerHand } from '@/lib/engine/types';
 import { GameState as EngineGameState } from '@/lib/engine/game';
 import { toast } from 'react-hot-toast';
-import { isValidMeld, calculateMeldPoints, identifyMeldType } from '@/lib/engine/meld';
+import { isValidMeld, calculateMeldPoints, identifyMeldType, canBuildMeld, fitsInMeld } from '@/lib/engine/meld';
 
 interface GameStore {
   stockPile: Card[];
@@ -21,6 +21,8 @@ interface GameStore {
   winnerId: string | null;
   myPlayerId: string | null;
   engine: EngineGameState | null;
+  isBuilding: boolean;
+  setIsBuilding: (val: boolean) => void;
 
   initGame: (myPlayerId: string) => void;
   drawFromStock: () => void;
@@ -33,8 +35,10 @@ interface GameStore {
   setIsVersusBots: (val: boolean) => void;
   addToProposedMeld: (cardId: string, meldIndex: number) => void;
   removeFromProposedMeld: (cardId: string) => void;
+  toggleProposedMeld: (cardId: string) => void;
   submitFrash: () => void;
   cancelProposed: () => void;
+  requestRedesbuit: () => Promise<void>;
   processBotTurn: () => Promise<void>;
 }
 
@@ -52,6 +56,8 @@ export const useGameStore = create<GameStore>((set, get) => ({
   isVersusBots: true,
   myPlayerId: null,
   engine: null,
+  isBuilding: false,
+  setIsBuilding: (val) => set({ isBuilding: val }),
 
   setPlayerCount: (val) => set({ playerCount: val }),
   setIsVersusBots: (val) => set({ isVersusBots: val }),
@@ -97,9 +103,16 @@ export const useGameStore = create<GameStore>((set, get) => ({
   },
 
   drawFromDiscard: () => {
-    const { engine, myPlayerId, players, currentPlayerIndex } = get();
+    const { engine, myPlayerId, players, currentPlayerIndex, discardPile } = get();
     if (!engine || !myPlayerId) return;
-    if (players[currentPlayerIndex].playerId !== myPlayerId) return;
+    const player = players[currentPlayerIndex];
+    if (player.playerId !== myPlayerId) return;
+
+    const topDiscard = discardPile[discardPile.length - 1];
+    if (topDiscard && !canBuildMeld(player.cards, topDiscard)) {
+        toast.error("You can only take from discard if you can build a meld with it!");
+        return;
+    }
 
     try {
       engine.drawFromDiscard(myPlayerId);
@@ -119,6 +132,13 @@ export const useGameStore = create<GameStore>((set, get) => ({
     if (players[currentPlayerIndex].playerId !== myPlayerId) return;
 
     try {
+      const player = players.find(p => p.playerId === myPlayerId);
+      const card = player?.cards.find(c => c.id === cardId);
+      if (card?.isJoker) {
+        toast.error("You cannot discard a Joker!");
+        return;
+      }
+
       engine.discardCard(myPlayerId, cardId);
       set({
         discardPile: [...engine.discardPile],
@@ -127,7 +147,8 @@ export const useGameStore = create<GameStore>((set, get) => ({
         isFirstTurn: engine.isFirstTurn,
         hasDrawn: engine.hasDrawn,
         isGameOver: engine.isGameOver,
-        winnerId: engine.winnerId
+        winnerId: engine.winnerId,
+        isBuilding: false
       });
 
       if (engine.isGameOver) {
@@ -156,7 +177,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
         try {
             if (!engine.hasDrawn) {
                 const topDiscard = engine.discardPile[engine.discardPile.length - 1];
-                if (topDiscard?.isJoker) {
+                if (topDiscard && (topDiscard.isJoker || canBuildMeld(currentPlayer.cards, topDiscard))) {
                     engine.drawFromDiscard(currentPlayer.playerId);
                 } else {
                     engine.drawFromStock(currentPlayer.playerId);
@@ -166,8 +187,12 @@ export const useGameStore = create<GameStore>((set, get) => ({
             }
 
             const cards = currentPlayer.cards;
-            const randomCard = cards[Math.floor(Math.random() * cards.length)];
-            engine.discardCard(currentPlayer.playerId, randomCard.id);
+            const nonJokerCards = cards.filter(c => !c.isJoker);
+            const cardToDiscard = nonJokerCards.length > 0 
+                ? nonJokerCards[Math.floor(Math.random() * nonJokerCards.length)]
+                : cards[Math.floor(Math.random() * cards.length)]; // Fallback if somehow only jokers left (shouldn't happen)
+            
+            engine.discardCard(currentPlayer.playerId, cardToDiscard.id);
 
             set({
                 discardPile: [...engine.discardPile],
@@ -250,12 +275,20 @@ export const useGameStore = create<GameStore>((set, get) => ({
   addToProposedMeld: (cardId, meldIndex) => {
     if (isNaN(meldIndex)) meldIndex = 0;
     const { players, myPlayerId, proposedMelds } = get();
-    const player = players.find(p => p.playerId === myPlayerId);
-    if (!player) return;
-    const card = player.cards.find(c => c.id === cardId);
-    if (!card) return;
+
+    // Remove from hand and add to proposed
+    const playerIdx = players.findIndex(p => p.playerId === myPlayerId);
+    if (playerIdx === -1) return;
+
+    const newPlayers = [...players];
+    const playerHand = [...newPlayers[playerIdx].cards];
+    const cardIdx = playerHand.findIndex(c => c.id === cardId);
+    if (cardIdx === -1) return; // Might be in another meld already
     
-    // Deep copy to avoid reference issues
+    const [card] = playerHand.splice(cardIdx, 1);
+    newPlayers[playerIdx] = { ...newPlayers[playerIdx], cards: playerHand };
+
+    // Deep copy proposed to avoid reference issues
     const newProposed = proposedMelds.map(m => [...m]);
     
     // Ensure the slot exists
@@ -263,23 +296,63 @@ export const useGameStore = create<GameStore>((set, get) => ({
       newProposed.push([]);
     }
 
-    // Remove card from any existing group first
-    newProposed.forEach((m, i) => {
-      newProposed[i] = m.filter(c => c.id !== cardId);
-    });
-
     // Add to the new group
     newProposed[meldIndex].push(card);
     
-    // Clean up empty groups except maybe the one we are building? 
-    // Actually, store should keep them for UI slots.
-    set({ proposedMelds: newProposed });
+    set({ proposedMelds: newProposed, players: newPlayers });
   },
 
   removeFromProposedMeld: (cardId) => {
-    const { proposedMelds } = get();
-    const newProposed = proposedMelds.map(m => m.filter(c => c.id !== cardId));
-    set({ proposedMelds: newProposed.filter(m => m.length > 0) });
+    const { proposedMelds, players, myPlayerId } = get();
+    const playerIdx = players.findIndex(p => p.playerId === myPlayerId);
+    if (playerIdx === -1) return;
+
+    let removedCard: Card | null = null;
+    const newProposed = proposedMelds.map(m => {
+        const idx = m.findIndex(c => c.id === cardId);
+        if (idx !== -1) {
+            [removedCard] = m.splice(idx, 1);
+        }
+        return m;
+    }).filter(m => m.length > 0 || proposedMelds.length === 1); // Keep at least one empty slot if it was the only one? No, filter is fine.
+
+    if (removedCard) {
+        const newPlayers = [...players];
+        newPlayers[playerIdx] = { 
+            ...newPlayers[playerIdx], 
+            cards: [...newPlayers[playerIdx].cards, removedCard] 
+        };
+        set({ proposedMelds: newProposed.filter(m => m.length > 0), players: newPlayers });
+    }
+  },
+
+  toggleProposedMeld: (cardId) => {
+    const { proposedMelds, addToProposedMeld, removeFromProposedMeld } = get();
+    const isProposed = proposedMelds.some(m => m.some(c => c.id === cardId));
+    
+    if (isProposed) {
+      removeFromProposedMeld(cardId);
+    } else {
+      // SMART PLACEMENT
+      const { players, myPlayerId } = get();
+      const player = players.find(p => p.playerId === myPlayerId);
+      const card = player?.cards.find(c => c.id === cardId);
+      
+      let targetIndex = 0;
+      if (card) {
+        // 1. Try to find a group it fits into
+        const fitIdx = proposedMelds.findIndex(m => fitsInMeld(m, card));
+        if (fitIdx !== -1) {
+            targetIndex = fitIdx;
+        } else {
+            // 2. Try an empty group
+            const emptyIdx = proposedMelds.findIndex(m => m.length === 0);
+            targetIndex = emptyIdx !== -1 ? emptyIdx : proposedMelds.length;
+        }
+      }
+      
+      addToProposedMeld(cardId, targetIndex);
+    }
   },
 
   submitFrash: () => {
@@ -291,19 +364,46 @@ export const useGameStore = create<GameStore>((set, get) => ({
     if (!hasSequence) { toast.error("You must have at least one sequence (e.g. 1-2-3) to فرش!"); return; }
     const totalPoints = proposedMelds.reduce((sum, group) => sum + calculateMeldPoints(group), 0);
     if (totalPoints < frashThreshold) { toast.error(`Total points (${totalPoints}) must be at least ${frashThreshold}!`); return; }
-    const cardIdsToRemove = proposedMelds.flat().map(c => c.id);
     const playerIdx = players.findIndex(p => p.playerId === myPlayerId);
     if (playerIdx === -1) return;
     const newPlayers = [...players];
-    newPlayers[playerIdx].cards = newPlayers[playerIdx].cards.filter(c => !cardIdsToRemove.includes(c.id));
     const newMelds = [...melds];
     proposedMelds.forEach(m => newMelds.push({ id: Math.random().toString(36), cards: m, type: identifyMeldType(m) as any }));
-    set({ players: newPlayers, melds: newMelds, proposedMelds: [] });
+    set({ players: newPlayers, melds: newMelds, proposedMelds: [], isBuilding: false });
     toast.success(`Successful فرش! (${totalPoints} points)`);
   },
 
   cancelProposed: () => {
-    set({ proposedMelds: [] });
+    const { proposedMelds, players, myPlayerId } = get();
+    if (proposedMelds.flat().length === 0) return;
+    
+    const playerIdx = players.findIndex(p => p.playerId === myPlayerId);
+    if (playerIdx === -1) return;
+
+    const newPlayers = [...players];
+    newPlayers[playerIdx] = { 
+        ...newPlayers[playerIdx], 
+        cards: [...newPlayers[playerIdx].cards, ...proposedMelds.flat()] 
+    };
+
+    set({ proposedMelds: [], players: newPlayers });
     toast("Meld stacking canceled. Cards returned to hand.", { icon: '↩️' });
+  },
+
+  requestRedesbuit: async () => {
+    const { initGame, myPlayerId } = get();
+    toast.loading("Requesting Redesbuit (Frich)...", { id: 'frich' });
+    
+    // Simulate voting
+    await new Promise(r => setTimeout(r, 2000));
+    
+    const accepted = Math.random() > 0.2; // 80% chance bots agree
+    
+    if (accepted && myPlayerId) {
+        toast.success("Redesbuit accepted! Restarting round...", { id: 'frich' });
+        initGame(myPlayerId);
+    } else {
+        toast.error("Redesbuit rejected by other players.", { id: 'frich' });
+    }
   }
 }));

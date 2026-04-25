@@ -11,7 +11,7 @@ import { LogOut, Trophy, RotateCcw } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 
 export default function GameRoom() {
-  const { initGame, discardCard, myPlayerId, players, currentPlayerIndex, isFirstTurn, reorderHand, isGameOver, winnerId } = useGameStore();
+  const { initGame, discardCard, myPlayerId, players, currentPlayerIndex, isFirstTurn, reorderHand, isGameOver, winnerId, isBuilding } = useGameStore();
   const [isMounted, setIsMounted] = useState(false);
 
   useEffect(() => {
@@ -37,8 +37,16 @@ export default function GameRoom() {
     const overId = over.id as string;
 
     if (overId === 'discard-pile') {
+      if (isBuilding) {
+        toast.error("Finish or Cancel your build before discarding!");
+        return;
+      }
       discardCard(activeId);
     } else if (overId === 'meld-area' || overId.startsWith('meld-')) {
+      if (!isBuilding) {
+        toast.error("Click 'Build' to start organizing groups!");
+        return;
+      }
       const meldIndex = overId.startsWith('meld-') ? parseInt(overId.split('-')[1]) : 0;
       useGameStore.getState().addToProposedMeld(activeId, meldIndex);
     } else if (overId === 'player-hand') {
@@ -60,8 +68,20 @@ export default function GameRoom() {
   if (!isMounted) return <div className="h-screen w-screen bg-emerald-950" />;
 
   return (
-    <div className="relative w-screen h-[100dvh] bg-[radial-gradient(ellipse_at_center,_var(--tw-gradient-stops))] from-emerald-800 via-emerald-950 to-black overflow-hidden flex flex-col">
+    <div className={`relative w-screen h-[100dvh] bg-[radial-gradient(ellipse_at_center,_var(--tw-gradient-stops))] from-emerald-800 via-emerald-950 to-black overflow-hidden flex flex-col transition-all duration-1000 ${isBuilding ? 'ring-[20px] ring-emerald-500/10 ring-inset' : ''}`}>
       <DndContext sensors={sensors} onDragEnd={handleDragEnd}>
+        {/* Build Mode Pulse */}
+        <AnimatePresence>
+          {isBuilding && (
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="absolute inset-0 pointer-events-none z-[60] shadow-[inset_0_0_100px_rgba(16,185,129,0.2)] animate-pulse"
+            />
+          )}
+        </AnimatePresence>
+
         <OpponentHand />
 
         {/* Quit Button */}
@@ -71,7 +91,7 @@ export default function GameRoom() {
             className="flex items-center gap-2 px-4 py-2 bg-black/40 hover:bg-red-500/20 text-white/60 hover:text-red-400 rounded-xl border border-white/10 transition-all font-bold text-xs"
           >
             <LogOut className="w-4 h-4" />
-            QUIT
+            YOKHREJ
           </Link>
         </div>
         
@@ -79,18 +99,17 @@ export default function GameRoom() {
         <div className="absolute top-24 left-1/2 -translate-x-1/2 z-20">
           <div className="bg-black/60 backdrop-blur-md px-6 py-2 rounded-full border border-white/10 flex flex-col items-center">
             <span className="text-emerald-400 font-bold tracking-widest text-xs uppercase">
-              {myPlayerId === players[currentPlayerIndex]?.playerId ? "Your Turn" : `Player ${currentPlayerIndex + 1}'s Turn`}
+              {myPlayerId === players[currentPlayerIndex]?.playerId ? "DOUREK" : `DOUR EL ${currentPlayerIndex + 1}`}
             </span>
             {isFirstTurn && (
               <span className="text-amber-400 text-[10px] font-medium italic mt-0.5">
-                Dealer's 1st Turn: Discard Only
+                Aawel Dour: Tyach Barka
               </span>
             )}
           </div>
         </div>
 
-        <div className="flex-1 flex flex-col items-center pt-32 px-4 overflow-y-auto">
-          <DeckArea />
+        <div className="flex-1 flex flex-col items-center justify-center px-4 pt-24 pb-48 overflow-y-auto select-none hide-scrollbar">
           <MeldArea />
         </div>
 
@@ -124,16 +143,16 @@ export default function GameRoom() {
                     transition={{ repeat: Infinity, duration: 1 }}
                     className="absolute -top-2 -right-2 bg-yellow-500 text-black text-[10px] font-black px-2 py-1 rounded-full"
                   >
-                    WINNER
+                    RBAHT
                   </motion.div>
                 )}
               </div>
 
               <h2 className="text-4xl font-black text-white mb-2 uppercase tracking-tighter">
-                {winnerId === myPlayerId ? "Glorious Victory!" : "Better Luck Next Time"}
+                {winnerId === myPlayerId ? "SA7IT YA M3ALEM!" : "MARRA OKHRA NCHALLAH"}
               </h2>
               <p className="text-white/40 font-medium mb-12">
-                {winnerId === myPlayerId ? "You've successfully cleared your hand!" : `Player ${players.findIndex(p => p.playerId === winnerId) + 1} has won the match.`}
+                {winnerId === myPlayerId ? "Wfawlek l'Aawra9!" : `Tfol ${players.findIndex(p => p.playerId === winnerId) + 1} Sabe9ek.`}
               </p>
 
               <div className="flex flex-col gap-4 w-full">
@@ -142,13 +161,13 @@ export default function GameRoom() {
                   className="w-full py-4 bg-emerald-500 hover:bg-emerald-400 text-white rounded-2xl font-bold flex items-center justify-center gap-2 transition-all shadow-lg active:scale-95"
                 >
                   <RotateCcw className="w-5 h-5" />
-                  Play Again
+                  Aawed Elaab
                 </button>
                 <Link 
                   href="/"
                   className="w-full py-4 bg-white/5 hover:bg-white/10 text-white/60 rounded-2xl font-bold transition-all"
                 >
-                  Return to Menu
+                  Arjaa lel Menu
                 </Link>
               </div>
             </motion.div>
